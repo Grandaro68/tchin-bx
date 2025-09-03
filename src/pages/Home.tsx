@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Bar } from "../types";
 import { supabase } from "../lib/supabase";
 import QGPicker from "../components/QGPicker";
@@ -18,7 +18,7 @@ export default function Home() {
   const [bars, setBars] = useState<Bar[]>([]);
   const [ranked, setRanked] = useState<(Bar & {rank:number})[]>([]);
   const [favs, setFavs] = useState<string[]>([]);
-  const [banko, setBanko] = useState(250);
+  const [banko, setBanko] = useState(250); // state peut garder le nom interne
   const [qg, setQG] = useState<string | null>(null);
   const [qgStart, setQGStart] = useState<Date>(new Date());
   const [mode, setMode] = useState<"outside"|"inQG"|"inOther">("outside");
@@ -26,9 +26,23 @@ export default function Home() {
 
   const multiplier = mode==="inQG" ? 3 : mode==="inOther" ? 1.5 : 1;
 
+  // refs pour bouton et audio
+  const btnRef = useRef<HTMLButtonElement | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    // Précharge l’audio (place /public/sounds/tchin.wav)
+    const a = new Audio("/sounds/tchin.wav");
+    a.preload = "auto";
+    audioRef.current = a;
+  }, []);
+
   useEffect(() => {
     (async () => {
-      const { data } = await supabase.from("bars").select("*").order("tchin_7d", { ascending: false });
+      const { data } = await supabase
+        .from("bars")
+        .select("*")
+        .order("tchin_7d", { ascending: false });
       const xs = (data ?? []) as Bar[];
       setBars(xs);
       setRanked(xs.map((b, i) => ({ ...b, rank: i+1 })));
@@ -36,14 +50,67 @@ export default function Home() {
     })();
   }, []);
 
+  // Particules “🍻 Tchin!” qui démarrent depuis le bouton
+  function spawnTchinParticles() {
+    const btn = btnRef.current;
+    if (!btn) return;
+    const rect = btn.getBoundingClientRect();
+    const originX = rect.left + rect.width / 2;
+    const originY = rect.top + rect.height / 2;
+
+    for (let i = 0; i < 12; i++) {
+      const el = document.createElement("div");
+      el.textContent = "🍻 Tchin!";
+      // styles inline (pas de classes tailwind côté runtime)
+      el.style.position = "fixed";
+      el.style.left = `${originX}px`;
+      el.style.top = `${originY}px`;
+      el.style.fontWeight = "700";
+      el.style.zIndex = "9999";
+      el.style.pointerEvents = "none";
+      el.style.textShadow = "0 2px 6px rgba(0,0,0,.35)";
+      el.style.willChange = "transform,opacity";
+      document.body.appendChild(el);
+
+      // trajectoire vers le haut avec angle aléatoire
+      const angle = (-90 + (Math.random() * 80 - 40)) * (Math.PI / 180);
+      const distance = 80 + Math.random() * 140;
+      const dx = Math.cos(angle) * distance;
+      const dy = Math.sin(angle) * distance;
+      const duration = 700 + Math.random() * 600;
+
+      el.animate(
+        [
+          { transform: "translate(0,0) scale(1)", opacity: 1 },
+          { transform: `translate(${dx}px, ${dy}px) scale(${0.9 + Math.random()*0.4})`, opacity: 0 }
+        ],
+        { duration, easing: "cubic-bezier(.2,.8,.2,1)", fill: "forwards" }
+      );
+
+      setTimeout(() => el.remove(), duration + 60);
+    }
+  }
+
   function tchiner() {
     if (!qg) { show("Choisis un QG", "err"); return; }
     const target = ranked.find(b => b.id === qg);
     if (!target) { show("QG introuvable", "err"); return; }
+
+    // son
+    try {
+      const a = audioRef.current;
+      if (a) { a.currentTime = 0; void a.play(); }
+    } catch { /* ignore */ }
+
+    // particules
+    spawnTchinParticles();
+
+    // gains
     const val = computeTchinValue(target.rank);
-    const gain = +( (val-1) * multiplier ).toFixed(2);
+    const gain = +((val - 1) * multiplier).toFixed(2);
     setBanko(b => +(b + gain).toFixed(2));
     show(`+${gain} Tchin 🍻`, "ok");
+
     // TODO: appeler une Edge Function pour enregistrer le tchin + increm bar
   }
 
@@ -65,30 +132,66 @@ export default function Home() {
         <div className="p-3 border rounded bg-slate-900">
           <div className="font-semibold mb-2">Top 10 Tchineurs (démo)</div>
           {["Alice","Bob","Carla","David","Emma","Farid","Gina","Hugo","Inès","Juan"].map((n,i)=>(
-            <div key={n} className="flex justify-between py-1 text-sm"><span>#{i+1} {n}</span><span className="opacity-70">{4200 - i*300} Tchin/7j</span></div>
+            <div key={n} className="flex justify-between py-1 text-sm">
+              <span>#{i+1} {n}</span>
+              <span className="opacity-70">{4200 - i*300} Tchin/7j</span>
+            </div>
           ))}
         </div>
       </div>
 
       {/* Centre */}
       <div className="p-4 border rounded bg-slate-900 md:col-span-2 flex flex-col items-center gap-4">
+        {/* BANQUE — mise en valeur au-dessus du bouton */}
+        <div
+          className="w-full max-w-md text-center rounded-lg border bg-slate-800/40 px-4 py-3"
+          role="status"
+          aria-live="polite"
+          title="Solde de Tchin"
+        >
+          <div className="uppercase tracking-wider text-xs text-slate-300">Banque</div>
+          <div className="text-3xl font-extrabold leading-none text-yellow-300 mt-1">
+            {banko.toFixed(2)} <span className="text-sm text-slate-300 font-semibold">Tchin</span>
+          </div>
+          <div className="text-xs text-slate-400 mt-1">
+            Valeur: {qgBar ? computeTchinValue(qgBar.rank).toFixed(2) : "—"} • multiplicateur x{multiplier}
+          </div>
+        </div>
+
         <div className="text-sm">
           {qgBar ? <>QG: <span className="font-semibold">{qgBar.name}</span> (rang {qgBar.rank}) — coût changement: {qgChangeCost(qgBar.rank)} Tchin</> : "Aucun QG"}
         </div>
+
         <div className="flex items-center gap-2">
-          <label>Mode :</label>
-          <select className="border px-2 py-1 rounded bg-slate-800" value={mode} onChange={e => setMode(e.target.value as any)}>
+          <label htmlFor="mode-select">Mode :</label>
+          <select
+            id="mode-select"
+            className="border px-2 py-1 rounded bg-slate-800"
+            value={mode}
+            onChange={e => setMode(e.target.value as any)}
+          >
             <option value="outside">Hors bar</option>
             <option value="inQG">Dans mon QG (x3)</option>
             <option value="inOther">Dans un autre bar (x1.5)</option>
           </select>
         </div>
+
         <div className="flex gap-2">
-          <button className="px-6 py-4 rounded-xl bg-yellow-500 text-black font-extrabold text-xl border" onClick={tchiner}>TCHIN !</button>
-          <button className="px-3 py-2 border rounded" onClick={() => setShowPicker(true)}>Choisir / Changer QG</button>
-        </div>
-        <div className="text-xs opacity-70">
-          Banko: <b>{banko.toFixed(2)}</b> • Valeur: {qgBar ? computeTchinValue(qgBar.rank).toFixed(2) : "—"} • multiplicateur x{multiplier}
+          <button
+            id="btn-tchin"
+            ref={btnRef}
+            className="px-6 py-4 rounded-xl bg-yellow-500 text-black font-extrabold text-xl border active:translate-y-px"
+            onClick={tchiner}
+          >
+            TCHIN !
+          </button>
+          <button
+            id="choose-qg"
+            className="px-3 py-2 border rounded"
+            onClick={() => setShowPicker(true)}
+          >
+            Choisir / Changer QG
+          </button>
         </div>
       </div>
 
@@ -96,17 +199,25 @@ export default function Home() {
       <div className="space-y-4 md:col-span-1">
         <div className="p-3 border rounded bg-slate-900">
           <div className="font-semibold mb-2">Bars favoris</div>
-          {favs.length===0 ? <div className="text-sm opacity-70">Aucun favori</div> : favs.map(fid=>{
+          {favs.length===0 ? (
+            <div className="text-sm opacity-70">Aucun favori</div>
+          ) : favs.map(fid=>{
             const b = ranked.find(x=>x.id===fid); if(!b) return null;
-            return <div key={fid} className="flex justify-between py-1 text-sm">
-              <span>{b.name}</span>
-              <button className="text-xs border px-2 py-0.5 rounded" onClick={()=>setFavs(favs.filter(x=>x!==fid))}>Retirer</button>
-            </div>
+            return (
+              <div key={fid} className="flex justify-between py-1 text-sm">
+                <span>{b.name}</span>
+                <button className="text-xs border px-2 py-0.5 rounded" onClick={()=>setFavs(favs.filter(x=>x!==fid))}>
+                  Retirer
+                </button>
+              </div>
+            );
           })}
         </div>
         <div className="p-3 border rounded bg-slate-900">
           <div className="font-semibold mb-2">Stats perso</div>
-          <div className="text-sm">Jours restants QG: {Math.max(0, QG_PERIOD_DAYS - daysBetween(qgStart, new Date()))} j</div>
+          <div className="text-sm">
+            Jours restants QG: {Math.max(0, QG_PERIOD_DAYS - daysBetween(qgStart, new Date()))} j
+          </div>
         </div>
       </div>
 
