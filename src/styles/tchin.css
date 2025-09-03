@@ -1,0 +1,22 @@
+/* bouton */
+.btn-tchin{
+  background:#ffcc00;
+  color:#111;
+  font-weight:800;
+  border-radius:12px;
+  padding:14px 28px;
+  box-shadow:0 6px 18px rgba(255,204,0,.2);
+  transition:transform .06s ease;
+}
+.btn-tchin:active{ transform: translateY(1px) scale(0.99); }
+
+/* particules */
+.tchin-particle{
+  position: fixed; /* sur l’écran, pas dans le flux */
+  pointer-events:none;
+  font-weight:700;
+  text-shadow:0 2px 6px rgba(0,0,0,.35);
+  will-change: transform, opacity;
+  z-index: 9999;
+  user-select:none;
+}
