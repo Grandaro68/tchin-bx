@@ -2,13 +2,12 @@
 import { createClient } from "@supabase/supabase-js";
 
 const url = import.meta.env.VITE_SUPABASE_URL;
-const key = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const anon = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-if (!url || !key) {
-  console.error("[Supabase] Missing env. Check Netlify variables VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY");
+if (!url || !anon) {
+  console.error("[Supabase] Env manquante:", { urlPresent: !!url, anonPresent: !!anon });
 }
 
-export const supabase = createClient(url ?? "", key ?? "", {
-  auth: { persistSession: true, autoRefreshToken: true }
+export const supabase = createClient(url!, anon!, {
+  auth: { persistSession: true, autoRefreshToken: true },
 });
-

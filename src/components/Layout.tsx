@@ -7,9 +7,19 @@ export default function Layout() {
   const [email, setEmail] = useState<string | null>(null);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => setEmail(data.session?.user?.email ?? null));
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => setEmail(s?.user?.email ?? null));
-    return () => sub.subscription.unsubscribe();
+    let mounted = true;
+
+    supabase.auth.getSession().then(({ data }) => {
+      if (!mounted) return;
+      setEmail?.(data.session?.user?.email ?? null);
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, session) => {
+      if (!mounted) return;
+      setEmail?.(session?.user?.email ?? null);
+    });
+
+    return () => { mounted = false; subscription.unsubscribe(); };
   }, []);
 
   return (
