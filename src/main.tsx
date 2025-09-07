@@ -1,15 +1,22 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { BrowserRouter } from "react-router-dom";
 import App from "./App";
+import ErrorBoundary from "./components/ErrorBoundary";
 import "./index.css";
 
-console.log("Tchin BX booting…", document.getElementById("root"));
+window.addEventListener("error", (e) => {
+  console.error("[window.error]", e.message, e.error);
+});
+window.addEventListener("unhandledrejection", (e) => {
+  console.error("[unhandledrejection]", e.reason);
+});
+
+console.log("Tchin BX booting…");
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <BrowserRouter>
+    <ErrorBoundary>
       <App />
-    </BrowserRouter>
+    </ErrorBoundary>
   </React.StrictMode>
 );

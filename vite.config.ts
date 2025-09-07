@@ -5,6 +5,7 @@ import tailwindcss from "@tailwindcss/postcss"; // 👈 v4
 
 export default defineConfig({
   plugins: [react()],
+  build: { sourcemap: true }, 
   css: {
     // On force Vite à n'utiliser que ce pipeline PostCSS (pas d'auto-plugins)
     postcss: {
