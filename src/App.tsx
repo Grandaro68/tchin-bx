@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 
 import Layout from "./components/Layout";
 import ProtectedRoute from "./components/ProtectedRoute";
+import Auth from "./pages/Auth";
 
 import Home from "./pages/Home";
 import Bars from "./pages/Bars";
@@ -19,14 +20,15 @@ export default function App() {
   return (
     <BrowserRouter>
       <Routes>
-        {/* --- Routes PUBLIQUES --- */}
+        {/* publiques */}
         <Route path="/infos" element={<Infos />} />
+        <Route path="/auth" element={<Auth />} />          {/* <--- nouveau */}
         <Route path="/signup" element={<SignUp />} />
         <Route path="/signin" element={<SignIn />} />
         <Route path="/auth/callback" element={<AuthCallback />} />
         <Route path="/onboarding" element={<Onboarding />} />
 
-        {/* --- Zone protégée : nécessite une session --- */}
+        {/* protégées */}
         <Route element={<ProtectedRoute><Layout /></ProtectedRoute>}>
           <Route index element={<Home />} />
           <Route path="bars" element={<Bars />} />
@@ -35,7 +37,6 @@ export default function App() {
           <Route path="settings" element={<Settings />} />
         </Route>
 
-        {/* Fallback */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>
