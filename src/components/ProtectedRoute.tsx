@@ -7,21 +7,25 @@ export default function ProtectedRoute({ children }: { children: React.ReactNode
   const [isAuth, setIsAuth] = useState(false);
   const location = useLocation();
 
-useEffect(() => {
-  let mounted = true;
+  useEffect(() => {
+    let mounted = true;
 
-  supabase.auth.getSession().then(({ data }) => {
-    if (!mounted) return;
-    setIsAuth?.(!!data.session);
-  });
+    supabase.auth.getSession().then(({ data, error }) => {
+      console.log("[ProtectedRoute] getSession:", { data, error });
+      if (!mounted) return;
+      setIsAuth(!!data?.session);
+      setLoading(false);
+    });
 
-  const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, session) => {
-    if (!mounted) return;
-    setIsAuth?.(!!session);
-  });
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, session) => {
+      console.log("[ProtectedRoute] onAuthStateChange:", session);
+      if (!mounted) return;
+      setIsAuth(!!session);
+      setLoading(false);
+    });
 
-  return () => { mounted = false; subscription.unsubscribe(); };
-}, []);
+    return () => { mounted = false; subscription.unsubscribe(); };
+  }, []);
 
   if (loading) {
     return (
@@ -34,6 +38,6 @@ useEffect(() => {
   return isAuth ? (
     <>{children}</>
   ) : (
-    <Navigate to="/signin" replace state={{ from: location }} />
+    <Navigate to="/auth" replace state={{ from: location }
   );
 }
