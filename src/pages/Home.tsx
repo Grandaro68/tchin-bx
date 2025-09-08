@@ -11,20 +11,32 @@ const TOTAL_BARS = 500;
 function computeTchinValue(rank: number){ return Math.round((BASE + BONUS*rank)*100)/100; }
 function qgChangeCost(rank: number){ const span=1000-500; const step=span/(TOTAL_BARS-1); return Math.round(1000-(rank-1)*step); }
 function daysBetween(a: Date,b: Date){ return Math.floor((+b-+a)/86400000); }
+function maskEmail(x?: string | null) {
+  if (!x) return "Joueur";
+  const [a,b] = x.split("@"); if(!a || !b) return x;
+  return a.slice(0,2) + "…" + a.slice(-1) + "@" + b;
+}
 
 export default function Home() {
   const { show, Toast } = useToast();
+
+  // Bars & leaderboard
   const [ranked, setRanked] = useState<(Bar & {rank:number})[]>([]);
+  const [leaders, setLeaders] = useState<
+    { user_id: string; gains: number; rank: number; username?: string | null; email?: string | null }[]
+  >([]);
+
+  // État joueur (local pour l’instant)
   const [favs, setFavs] = useState<string[]>([]);
   const [banko, setBanko] = useState(250);
   const [qg, setQG] = useState<string | null>(null);
   const [qgStart, setQGStart] = useState<Date>(new Date());
   const [mode, setMode] = useState<"outside"|"inQG"|"inOther">("outside");
-  const [showPicker, setShowPicker] = useState(false); // <- on forcera l’ouverture au 1er lancement
+  const [showPicker, setShowPicker] = useState(false);
 
   const multiplier = mode==="inQG" ? 3 : mode==="inOther" ? 1.5 : 1;
 
-  // refs pour bouton et audio (pour les particules + son)
+  // refs pour bouton et audio (particules + son)
   const btnRef = useRef<HTMLButtonElement | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -35,7 +47,7 @@ export default function Home() {
     audioRef.current = a;
   }, []);
 
-  // Charge les bars et **n’impose pas** de QG : on ouvre le picker si aucun QG
+  // Charge les bars et ouvre le picker si aucun QG
   useEffect(() => {
     (async () => {
       const { data, error } = await supabase
@@ -48,10 +60,40 @@ export default function Home() {
       const xs = (data ?? []) as Bar[];
       setRanked(xs.map((b, i) => ({ ...b, rank: i+1 })));
 
-      // si aucun QG enregistré → ouvrir le picker
       if (!qg) setShowPicker(true);
     })();
-  }, []); // qg volontairement pas en dépendance
+  }, []); // pas de dépendance sur qg
+
+  // Charge le leaderboard réel (Option B: table user_stats_7d)
+  useEffect(() => {
+    (async () => {
+      // essaie d’inclure username/email via relation profiles (si RLS permet)
+      let { data, error } = await supabase
+        .from("user_stats_7d")
+        .select("user_id,gains,rank,profiles(username,email)")
+        .order("rank", { ascending: true })
+        .limit(10);
+
+      if (error) {
+        console.warn("[leaderboard] fallback sans join profiles:", error.message);
+        const res = await supabase
+          .from("user_stats_7d")
+          .select("user_id,gains,rank")
+          .order("rank", { ascending: true })
+          .limit(10);
+        data = res.data ?? [];
+      }
+
+      const rows = (data ?? []).map((r: any) => ({
+        user_id: r.user_id,
+        gains: Number(r.gains ?? 0),
+        rank: Number(r.rank ?? 0),
+        username: r.profiles?.username ?? null,
+        email: r.profiles?.email ?? null,
+      }));
+      setLeaders(rows);
+    })();
+  }, []);
 
   // Particules “🍻 Tchin!” depuis le bouton
   function spawnTchinParticles() {
@@ -103,21 +145,36 @@ export default function Home() {
     // particules
     spawnTchinParticles();
 
-    // gains (coté client)
+    // gains (client)
     const val = computeTchinValue(target.rank);
     const gain = +((val - 1) * multiplier).toFixed(2);
     setBanko(b => +(b + gain).toFixed(2));
     show(`+${gain} Tchin 🍻`, "ok");
 
-    // (optionnel) côté serveur : enregistrer le tchin
-    // await supabase.rpc('add_tchin', { bar_id: qg, mode });
+    // enregistre le tchin côté DB (alimente le classement)
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        await supabase.from("tchins").insert({
+          user_id: user.id,
+          bar_id: target.id,
+          value: val,
+          multiplier,
+          user_gain: gain,
+          bar_gain: gain,       // ajuste si tu as une logique différente pour le bar
+          // created_at: default now()
+        });
+      }
+    } catch (e) {
+      console.warn("[tchins insert] non bloquant:", e);
+    }
   }
 
   const qgBar = ranked.find(b => b.id === qg) || null;
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-      {/* Col gauche */}
+      {/* Col gauche : Bars + Tchineurs */}
       <div className="space-y-4 md:col-span-1 md:sticky md:top-4">
         <div className="p-3 border rounded bg-slate-900">
           <div className="font-semibold mb-2">Top 10 Bars</div>
@@ -130,8 +187,17 @@ export default function Home() {
           {ranked.length===0 && <div className="text-sm opacity-70">Chargement…</div>}
         </div>
 
-        {/* ⛔️ Suppression du faux classement des tchineurs (démo) */}
-        {/* (On remettra un vrai leaderboard quand user_stats_7d sera câblé) */}
+        <div className="p-3 border rounded bg-slate-900">
+          <div className="font-semibold mb-2">Top 10 Tchineurs</div>
+          {leaders.length === 0 ? (
+            <div className="text-sm opacity-70">Aucun score (encore) cette semaine.</div>
+          ) : leaders.map((r) => (
+            <div key={r.user_id} className="flex justify-between py-1 text-sm">
+              <span>#{r.rank} {r.username || maskEmail(r.email)}</span>
+              <span className="opacity-70">{r.gains.toFixed(0)} Tchin/7j</span>
+            </div>
+          ))}
+        </div>
       </div>
 
       {/* Centre */}
@@ -165,7 +231,7 @@ export default function Home() {
             className="border px-2 py-1 rounded bg-slate-800"
             value={mode}
             onChange={e => setMode(e.target.value as any)}
-            disabled={!qg} // pas de mode tant que pas de QG
+            disabled={!qg}
           >
             <option value="outside">Hors bar</option>
             <option value="inQG">Dans mon QG (x3)</option>
@@ -179,7 +245,7 @@ export default function Home() {
             ref={btnRef}
             className="px-6 py-4 rounded-xl bg-yellow-500 text-black font-extrabold text-xl border active:translate-y-px disabled:opacity-60"
             onClick={tchiner}
-            disabled={!qg} // <- désactivé tant que pas de QG
+            disabled={!qg}
           >
             TCHIN !
           </button>
@@ -219,7 +285,7 @@ export default function Home() {
         </div>
       </div>
 
-      {/* Sélecteur QG — ouvert automatiquement si aucun QG */}
+      {/* QG Picker */}
       {showPicker && (
         <QGPicker
           bars={ranked.slice(0, 30)}
@@ -236,7 +302,6 @@ export default function Home() {
             setQG(b.id); setQGStart(new Date()); setShowPicker(false);
           }}
           onClose={()=>{
-            // si aucun QG encore choisi → on laisse ouvert (QG obligatoire)
             if (!qg) { show("Tu dois choisir un QG pour commencer 👇", "err"); return; }
             setShowPicker(false);
           }}
