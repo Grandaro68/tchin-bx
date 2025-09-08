@@ -37,7 +37,7 @@ export default function ProtectedRoute({ children }: { children: React.ReactNode
 
   return isAuth ? (
     <>{children}</>
-  ) : (
-    <Navigate to="/auth" replace state={{ from: location }
-  );
+    ) : (
+      <Navigate to="/auth" replace state={{ from: location }} />
+    );
 }

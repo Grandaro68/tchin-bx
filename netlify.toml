@@ -1,0 +1,19 @@
+# netlify.toml (racine du projet)
+[build]
+  command = "npm run build"    # ou: pnpm build / yarn build
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "18"          # (18 ou 20 — évite 16)
+
+# SPA: toutes les routes -> index.html
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+# (optionnel) headers de base
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
