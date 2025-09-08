@@ -17,6 +17,15 @@ function maskEmail(x?: string | null) {
   return a.slice(0,2) + "…" + a.slice(-1) + "@" + b;
 }
 
+type UserStateRow = {
+  user_id: string;
+  banko: number;
+  qg: string | null;
+  qg_start: string | null;   // ISO
+  mode: "outside"|"inQG"|"inOther";
+  favs: string[] | null;
+};
+
 export default function Home() {
   const { show, Toast } = useToast();
 
@@ -26,56 +35,106 @@ export default function Home() {
     { user_id: string; gains: number; rank: number; username?: string | null; email?: string | null }[]
   >([]);
 
-  // État joueur (local pour l’instant)
-  const [favs, setFavs] = useState<string[]>([]);
+  // État joueur
   const [banko, setBanko] = useState(250);
   const [qg, setQG] = useState<string | null>(null);
   const [qgStart, setQGStart] = useState<Date>(new Date());
   const [mode, setMode] = useState<"outside"|"inQG"|"inOther">("outside");
+  const [favs, setFavs] = useState<string[]>([]);
   const [showPicker, setShowPicker] = useState(false);
 
   const multiplier = mode==="inQG" ? 3 : mode==="inOther" ? 1.5 : 1;
 
-  // refs pour bouton et audio (particules + son)
+  // refs pour bouton et audio
   const btnRef = useRef<HTMLButtonElement | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
-  // Précharge l’audio
+  // Précharge audio
   useEffect(() => {
     const a = new Audio("/sounds/tchin.wav");
     a.preload = "auto";
     audioRef.current = a;
   }, []);
 
-  // Charge les bars et ouvre le picker si aucun QG
+  // Helpers DB
+  async function ensureUserState(): Promise<UserStateRow | null> {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return null;
+
+    const { data, error } = await supabase
+      .from("user_state")
+      .select("*")
+      .eq("user_id", user.id)
+      .single();
+
+    if (error && error.code !== "PGRST116") { // not found = PGRST116
+      console.warn("[user_state] load error:", error.message);
+      return null;
+    }
+
+    if (!data) {
+      const init: Partial<UserStateRow> = {
+        user_id: user.id,
+        banko: 250,
+        qg: null,
+        qg_start: null,
+        mode: "outside",
+        favs: [],
+      };
+      const { data: created, error: e2 } = await supabase
+        .from("user_state")
+        .insert(init)
+        .select()
+        .single();
+      if (e2) { console.warn("[user_state] create error:", e2.message); return null; }
+      return created as any;
+    }
+
+    return data as any;
+  }
+
+  async function saveUserState(patch: Partial<UserStateRow>) {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+    await supabase.from("user_state").update(patch).eq("user_id", user.id);
+  }
+
+  // Charge bars + user_state
   useEffect(() => {
     (async () => {
+      // Bars
       const { data, error } = await supabase
         .from("bars")
         .select("*")
         .order("tchin_7d", { ascending: false });
-
-      if (error) { console.error(error); show("Erreur de chargement des bars", "err"); return; }
-
-      const xs = (data ?? []) as Bar[];
+      if (!data || error) { console.error(error); show("Erreur de chargement des bars", "err"); return; }
+      const xs = data as Bar[];
       setRanked(xs.map((b, i) => ({ ...b, rank: i+1 })));
 
-      if (!qg) setShowPicker(true);
+      // User state
+      const st = await ensureUserState();
+      if (st) {
+        setBanko(Number(st.banko ?? 250));
+        setQG(st.qg ?? null);
+        setQGStart(st.qg_start ? new Date(st.qg_start) : new Date());
+        setMode((st.mode as any) ?? "outside");
+        setFavs(st.favs ?? []);
+      }
+      // Si pas de QG => ouvrir le picker
+      setShowPicker(!st?.qg);
     })();
-  }, []); // pas de dépendance sur qg
+  }, []); // 1er render
 
-  // Charge le leaderboard réel (Option B: table user_stats_7d)
+  // Leaderboard réel (table matérialisée)
   useEffect(() => {
     (async () => {
-      // essaie d’inclure username/email via relation profiles (si RLS permet)
       let { data, error } = await supabase
         .from("user_stats_7d")
         .select("user_id,gains,rank,profiles(username,email)")
         .order("rank", { ascending: true })
         .limit(10);
-
       if (error) {
-        console.warn("[leaderboard] fallback sans join profiles:", error.message);
+        console.warn("[leaderboard] fallback:", error.message);
         const res = await supabase
           .from("user_stats_7d")
           .select("user_id,gains,rank")
@@ -83,7 +142,6 @@ export default function Home() {
           .limit(10);
         data = res.data ?? [];
       }
-
       const rows = (data ?? []).map((r: any) => ({
         user_id: r.user_id,
         gains: Number(r.gains ?? 0),
@@ -95,14 +153,12 @@ export default function Home() {
     })();
   }, []);
 
-  // Particules “🍻 Tchin!” depuis le bouton
+  // Particules
   function spawnTchinParticles() {
-    const btn = btnRef.current;
-    if (!btn) return;
+    const btn = btnRef.current; if (!btn) return;
     const rect = btn.getBoundingClientRect();
     const originX = rect.left + rect.width / 2;
     const originY = rect.top + rect.height / 2;
-
     for (let i = 0; i < 12; i++) {
       const el = document.createElement("div");
       el.textContent = "🍻 Tchin!";
@@ -129,7 +185,6 @@ export default function Home() {
         ],
         { duration, easing: "cubic-bezier(.2,.8,.2,1)", fill: "forwards" }
       );
-
       setTimeout(() => el.remove(), duration + 60);
     }
   }
@@ -139,34 +194,28 @@ export default function Home() {
     const target = ranked.find(b => b.id === qg);
     if (!target) { show("QG introuvable", "err"); return; }
 
-    // son
     try { const a = audioRef.current; if (a) { a.currentTime = 0; void a.play(); } } catch {}
-
-    // particules
     spawnTchinParticles();
 
-    // gains (client)
     const val = computeTchinValue(target.rank);
     const gain = +((val - 1) * multiplier).toFixed(2);
     setBanko(b => +(b + gain).toFixed(2));
     show(`+${gain} Tchin 🍻`, "ok");
 
-    // enregistre le tchin côté DB (alimente le classement)
-    try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        await supabase.from("tchins").insert({
-          user_id: user.id,
-          bar_id: target.id,
-          value: val,
-          multiplier,
-          user_gain: gain,
-          bar_gain: gain,       // ajuste si tu as une logique différente pour le bar
-          // created_at: default now()
-        });
-      }
-    } catch (e) {
-      console.warn("[tchins insert] non bloquant:", e);
+    // Persist: +banque, +ligne tchins
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user) {
+      await supabase.from("user_state")
+        .update({ banko: banko + gain })
+        .eq("user_id", user.id);
+      await supabase.from("tchins").insert({
+        user_id: user.id,
+        bar_id: target.id,
+        value: val,
+        multiplier,
+        user_gain: gain,
+        bar_gain: gain,
+      });
     }
   }
 
@@ -174,7 +223,7 @@ export default function Home() {
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-      {/* Col gauche : Bars + Tchineurs */}
+      {/* Col gauche */}
       <div className="space-y-4 md:col-span-1 md:sticky md:top-4">
         <div className="p-3 border rounded bg-slate-900">
           <div className="font-semibold mb-2">Top 10 Bars</div>
@@ -203,12 +252,7 @@ export default function Home() {
       {/* Centre */}
       <div className="p-4 border rounded bg-slate-900 md:col-span-2 flex flex-col items-center gap-4">
         {/* BANQUE */}
-        <div
-          className="w-full max-w-md text-center rounded-lg border bg-slate-800/40 px-4 py-3"
-          role="status"
-          aria-live="polite"
-          title="Solde de Tchin"
-        >
+        <div className="w-full max-w-md text-center rounded-lg border bg-slate-800/40 px-4 py-3" role="status" aria-live="polite">
           <div className="uppercase tracking-wider text-xs text-slate-300">Banque</div>
           <div className="text-3xl font-extrabold leading-none text-yellow-300 mt-1">
             {banko.toFixed(2)} <span className="text-sm text-slate-300 font-semibold">Tchin</span>
@@ -230,7 +274,12 @@ export default function Home() {
             id="mode-select"
             className="border px-2 py-1 rounded bg-slate-800"
             value={mode}
-            onChange={e => setMode(e.target.value as any)}
+            onChange={async (e) => {
+              const v = e.target.value as "outside"|"inQG"|"inOther";
+              setMode(v);
+              const { data: { user } } = await supabase.auth.getUser();
+              if (user) await supabase.from("user_state").update({ mode: v }).eq("user_id", user.id);
+            }}
             disabled={!qg}
           >
             <option value="outside">Hors bar</option>
@@ -270,7 +319,15 @@ export default function Home() {
             return (
               <div key={fid} className="flex justify-between py-1 text-sm">
                 <span>{b.name}</span>
-                <button className="text-xs border px-2 py-0.5 rounded" onClick={()=>setFavs(favs.filter(x=>x!==fid))}>
+                <button
+                  className="text-xs border px-2 py-0.5 rounded"
+                  onClick={async ()=>{
+                    const next = favs.filter(x=>x!==fid);
+                    setFavs(next);
+                    const { data: { user } } = await supabase.auth.getUser();
+                    if (user) await supabase.from("user_state").update({ favs: next }).eq("user_id", user.id);
+                  }}
+                >
                   Retirer
                 </button>
               </div>
@@ -280,7 +337,7 @@ export default function Home() {
         <div className="p-3 border rounded bg-slate-900">
           <div className="font-semibold mb-2">Stats perso</div>
           <div className="text-sm">
-            Jours restants QG: {Math.max(0, QG_PERIOD_DAYS - daysBetween(qgStart, new Date()))} j
+            Jours restants QG: {qg ? Math.max(0, QG_PERIOD_DAYS - daysBetween(qgStart, new Date())) : "—"} j
           </div>
         </div>
       </div>
@@ -290,16 +347,22 @@ export default function Home() {
         <QGPicker
           bars={ranked.slice(0, 30)}
           cost={(r)=>qgChangeCost(r)}
-          onChoose={(b)=>{
-            if (qg) {
+          onChoose={async (b)=>{
+            const isChange = Boolean(qg);
+            if (isChange) {
               const current = ranked.find(x=>x.id===qg);
               if (current) {
                 const cost = qgChangeCost(current.rank);
                 if (banko < cost){ show(`Fonds insuffisants (${cost})`, "err"); return; }
                 setBanko(v => +(v - cost).toFixed(2));
+                const { data: { user } } = await supabase.auth.getUser();
+                if (user) await supabase.from("user_state").update({ banko: banko - cost }).eq("user_id", user.id);
               }
             }
-            setQG(b.id); setQGStart(new Date()); setShowPicker(false);
+            const start = new Date();
+            setQG(b.id); setQGStart(start); setShowPicker(false);
+            const { data: { user } } = await supabase.auth.getUser();
+            if (user) await supabase.from("user_state").update({ qg: b.id, qg_start: start.toISOString() }).eq("user_id", user.id);
           }}
           onClose={()=>{
             if (!qg) { show("Tu dois choisir un QG pour commencer 👇", "err"); return; }
